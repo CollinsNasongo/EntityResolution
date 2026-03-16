@@ -7,6 +7,10 @@
 # Virtual Env
 venv
 
+# Airflow outputs
+data/
+logs/
+
 # User-specific files
 *.rsuser
 *.suo
