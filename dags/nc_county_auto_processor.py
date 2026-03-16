@@ -12,7 +12,6 @@ import shutil
 # ✅ DATA DIRECTORIES (OUTSIDE dags/)
 # ---------------------------------------------------------
 BASE_DIR = "/opt/airflow/data/NorthCarolina"
-
 RAW_DIR = os.path.join(BASE_DIR, "raw_files")
 STANDARDIZED_DIR = os.path.join(BASE_DIR, "standardized")
 CLEANED_DIR = os.path.join(BASE_DIR, "cleaned")

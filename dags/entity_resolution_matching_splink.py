@@ -40,7 +40,7 @@ def load_matching_ready_data():
     all_df = pd.concat(dfs, ignore_index=True)
     all_df = all_df.dropna(subset=["unique_id"])
 
-    TARGET_RECORDS = 25000
+    TARGET_RECORDS = 100000
 
     if len(all_df) > TARGET_RECORDS:
         all_df = all_df.sample(
