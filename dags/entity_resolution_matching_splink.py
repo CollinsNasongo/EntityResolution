@@ -4,7 +4,6 @@ from datetime import datetime
 import pandas as pd
 import os
 import glob
-import stat
 
 # ---------------------------------------------------------
 # DATA DIRECTORIES
@@ -20,23 +19,6 @@ ALL_RECORDS_PATH = os.path.join(MATCHING_RESULTS_DIR, "all_records.csv")
 SPLINK_PREDICTIONS_PATH = os.path.join(MATCHING_RESULTS_DIR, "splink_predictions.csv")
 GOLDEN_ID_MAPPING_PATH = os.path.join(MATCHING_RESULTS_DIR, "golden_id_mapping.csv")
 MULTI_COUNTY_PEOPLE_PATH = os.path.join(MATCHING_RESULTS_DIR, "multi_county_people.csv")
-
-
-# ---------------------------------------------------------
-# HELPER — SAFE FILE WRITE
-# Deletes and re-creates output files before writing so
-# that stale files from failed previous runs (which may
-# have wrong permissions) never block a fresh run.
-# ---------------------------------------------------------
-def safe_remove(path: str) -> None:
-    """Remove a file if it exists, fixing permissions first if needed."""
-    if os.path.exists(path):
-        try:
-            os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
-            os.remove(path)
-            print(f"Removed stale file: {path}")
-        except Exception as e:
-            raise RuntimeError(f"Cannot remove {path}: {e}")
 
 
 # ---------------------------------------------------------
@@ -58,17 +40,20 @@ def load_matching_ready_data():
     all_df = pd.concat(dfs, ignore_index=True)
     all_df = all_df.dropna(subset=["unique_id"])
 
-    TARGET_RECORDS = 100000
+    TARGET_RECORDS = 25000
 
     if len(all_df) > TARGET_RECORDS:
-        all_df = all_df.sample(n=TARGET_RECORDS, random_state=42)
+        all_df = all_df.sample(
+            n=TARGET_RECORDS,
+            random_state=42
+        )
         print(f"Dataset limited to {TARGET_RECORDS:,} records")
     else:
         print(f"Dataset already under {TARGET_RECORDS:,}")
 
-    all_df["pipeline_run_timestamp"] = pd.Timestamp.utcnow()
+    run_timestamp = pd.Timestamp.utcnow()
+    all_df["pipeline_run_timestamp"] = run_timestamp
 
-    safe_remove(ALL_RECORDS_PATH)
     all_df.to_csv(ALL_RECORDS_PATH, index=False)
 
     print(f"Consolidated {len(all_df):,} records for matching")
@@ -95,7 +80,7 @@ def run_splink_matching():
             "gender_code",
             "birth_year",
             "county_desc",
-            "pipeline_run_timestamp",
+            "pipeline_run_timestamp"
         ],
         dtype={
             "unique_id": "string",
@@ -105,57 +90,89 @@ def run_splink_matching():
             "gender_code": "category",
             "county_desc": "category",
         },
-        low_memory=False,
+        low_memory=False
     )
-
-    df["source_dataset"] = df["county_desc"]
 
     df["birth_year"] = pd.to_numeric(df["birth_year"], errors="coerce").astype("Int16")
 
     # -----------------------------------------------------
     # NORMALIZE NAMES
     # -----------------------------------------------------
-    df["first_name"] = df["first_name"].str.lower().str.strip().fillna("")
-    df["middle_name"] = df["middle_name"].str.lower().str.strip().fillna("")
-    df["last_name"] = df["last_name"].str.lower().str.strip().fillna("")
+    df["first_name"] = df["first_name"].str.lower().fillna("")
+    df["middle_name"] = df["middle_name"].str.lower().fillna("")
+    df["last_name"] = df["last_name"].str.lower().fillna("")
+
+    # -----------------------------------------------------
+    # CREATE FULL NAME + FIRST INITIAL
+    # -----------------------------------------------------
+    df["full_name"] = (
+        df["first_name"].fillna("") + " " +
+        df["middle_name"].fillna("") + " " +
+        df["last_name"].fillna("")
+    ).str.replace(r"\s+", " ", regex=True).str.strip()
+
+    df["first_initial"] = df["first_name"].str[0].fillna("")
 
     print(f"Loaded {len(df):,} rows for matching")
 
     # -----------------------------------------------------
     # SPLINK SETTINGS
-    #
-    # LOOSENED — JaroWinkler lower bounds relaxed:
-    #   first_name: [0.80, 0.88]  (was [0.85, 0.92])
-    #   last_name:  [0.85, 0.92]  (was [0.88, 0.95])
-    # This catches records where names are spelled
-    # slightly differently (e.g. nicknames, typos).
-    #
-    # gender_code: ExactMatch — kept strict, different
-    # gender codes should never be linked.
-    #
-    # birth_year: ExactMatch — kept strict at model level;
-    # a ±1 tolerance is applied in stage 3 instead so
-    # it only affects the final cluster filter, not
-    # the scoring weights.
     # -----------------------------------------------------
     settings = SettingsCreator(
         link_type="link_only",
         unique_id_column_name="unique_id",
-        source_dataset_column_name="source_dataset",
+        source_dataset_column_name="county_desc",
 
         comparisons=[
-            # LOOSENED — lower JaroWinkler thresholds
-            cl.JaroWinklerAtThresholds("first_name", [0.80, 0.88]),
-            cl.JaroWinklerAtThresholds("last_name", [0.85, 0.92]),
-            cl.ExactMatch("gender_code"),
+
+            # -------------------------
+            # FIRST NAME
+            # -------------------------
+            cl.JaroWinklerAtThresholds(
+                "first_name",
+                [0.95, 0.90]
+            ),
+
+            # -------------------------
+            # MIDDLE NAME (often missing)
+            # -------------------------
+            cl.JaroWinklerAtThresholds(
+                "middle_name",
+                [0.90]
+            ),
+
+            # -------------------------
+            # LAST NAME (strong signal)
+            # -------------------------
+            cl.ExactMatch("last_name"),
+
+            cl.JaroWinklerAtThresholds(
+                "last_name",
+                [0.97, 0.92]
+            ),
+
+            # -------------------------
+            # FULL NAME
+            # -------------------------
+            cl.JaroWinklerAtThresholds(
+                "full_name",
+                [0.92]
+            ),
+
+            # -------------------------
+            # DEMOGRAPHICS
+            # -------------------------
             cl.ExactMatch("birth_year"),
+
+            cl.ExactMatch("gender_code"),
         ],
 
         blocking_rules_to_generate_predictions=[
-            block_on("birth_year", "last_name", "first_name"),
-            block_on("birth_year", "last_name"),
+
+            block_on("birth_year", "first_name", "last_name"),
+
             block_on("birth_year", "first_name"),
-            block_on("gender_code", "last_name"),
+
         ],
 
         retain_intermediate_calculation_columns=True,
@@ -164,61 +181,39 @@ def run_splink_matching():
     db_api = DuckDBAPI(connection=":memory:")
     linker = Linker(df, settings, db_api=db_api)
 
-    # -----------------------------------------------------
-    # ESTIMATE PRIOR MATCH PROBABILITY
-    # -----------------------------------------------------
     print("Estimating baseline match probability...")
 
+    deterministic_rules = [
+        block_on("first_name", "birth_year"),
+        block_on("last_name"),
+    ]
+
     linker.training.estimate_probability_two_random_records_match(
-        [
-            block_on("first_name", "birth_year"),
-            block_on("last_name"),
-        ],
-        recall=0.7,
+        deterministic_rules,
+        recall=0.7
     )
 
-    # -----------------------------------------------------
-    # ESTIMATE U VALUES
-    # -----------------------------------------------------
-    print("Estimating u values via random sampling...")
+    print("Running EM parameter estimation...")
 
-    linker.training.estimate_u_using_random_sampling(max_pairs=1e6)
-
-    # -----------------------------------------------------
-    # EM TRAINING
-    # -----------------------------------------------------
-    print("Running EM session 1 (block on birth_year, last_name)...")
+    training_blocking_rule = block_on("birth_year", "last_name")
 
     linker.training.estimate_parameters_using_expectation_maximisation(
-        block_on("birth_year", "last_name")
+        training_blocking_rule
     )
 
-    print("Running EM session 2 (block on first_name, gender_code)...")
-
-    linker.training.estimate_parameters_using_expectation_maximisation(
-        block_on("first_name", "gender_code")
-    )
-
-    # -----------------------------------------------------
-    # PREDICTION
-    # LOOSENED — threshold lowered from 0.95 → 0.80
-    # More candidates pass through to stage 3 where the
-    # hard filters provide the final quality gate.
-    # -----------------------------------------------------
     print("Predicting matches...")
 
-    predictions = linker.inference.predict(threshold_match_probability=0.80)
+    predictions = linker.inference.predict(
+        threshold_match_probability=0.92
+    )
 
     predictions_df = predictions.as_pandas_dataframe()
 
-    print(predictions_df["match_probability"].describe())
-
     predictions_df["pipeline_run_timestamp"] = pd.Timestamp.utcnow()
 
-    safe_remove(SPLINK_PREDICTIONS_PATH)
     predictions_df.to_csv(SPLINK_PREDICTIONS_PATH, index=False)
 
-    print(f"Saved {len(predictions_df):,} candidate pairs")
+    print(f"Saved Splink predictions to: {SPLINK_PREDICTIONS_PATH}")
 
     del df
     del predictions_df
@@ -236,44 +231,20 @@ def build_clusters_and_golden_ids():
     preds["birth_year_l"] = pd.to_numeric(preds["birth_year_l"], errors="coerce")
     preds["birth_year_r"] = pd.to_numeric(preds["birth_year_r"], errors="coerce")
 
-    print(f"Total candidate pairs before filtering: {len(preds):,}")
+    print(f"Total candidate pairs: {len(preds):,}")
 
     # -----------------------------------------------------
-    # FILTER MATCHES
-    #
-    # match_probability >= 0.85  (LOOSENED from 0.90)
-    #   — lets in more valid matches that scored slightly
-    #   lower due to name variations or data entry
-    #   differences between counties.
-    #
-    # gender_code exact match  — kept strict.
-    #
-    # birth_year ±1 tolerance  (LOOSENED from exact)
-    #   — allows for off-by-one data entry errors, e.g.
-    #   1979 vs 1980. ExactMatch is still used at the
-    #   Splink scoring level; this only affects the
-    #   final cluster filter.
-    #
-    # gamma_last_name > 0  — kept to block pure
-    #   last-name-only family member false matches.
-    #
-    # gamma_first_name filter REMOVED  — was too
-    #   aggressive; nicknames and shortened names
-    #   (e.g. "Bob" vs "Robert") can legitimately
-    #   score at gamma level 0.
+    # STRICT MATCH FILTER
     # -----------------------------------------------------
     matches = preds[
-        (preds["match_probability"] >= 0.85)
+        (preds["match_probability"] >= 0.93)
         & (preds["gender_code_l"] == preds["gender_code_r"])
-        & (abs(preds["birth_year_l"] - preds["birth_year_r"]) <= 1)   # LOOSENED: ±1
-        & (preds["gamma_last_name"] > 0)                               # last name must have some similarity
-    ]
+        & (preds["birth_year_l"] == preds["birth_year_r"])
+        & (preds["gamma_last_name"] > 0)
+        ]
 
     print(f"Candidate pairs after filtering: {len(matches):,}")
 
-    # -----------------------------------------------------
-    # UNION-FIND CLUSTERING
-    # -----------------------------------------------------
     parent = {}
 
     def find(x):
@@ -300,28 +271,23 @@ def build_clusters_and_golden_ids():
         root = find(uid)
         clusters.setdefault(root, []).append(uid)
 
-    # -----------------------------------------------------
-    # GOLDEN ID ASSIGNMENT
-    # -----------------------------------------------------
     golden_rows = []
 
     for i, (root, members) in enumerate(clusters.items(), start=1):
         for uid in members:
             golden_rows.append({
                 "golden_id": i,
-                "unique_id": uid,
+                "unique_id": uid
             })
 
     golden_df = pd.DataFrame(golden_rows)
+
     golden_df = golden_df.merge(all_df, on="unique_id", how="left")
+
     golden_df["pipeline_run_timestamp"] = pd.Timestamp.utcnow()
 
-    safe_remove(GOLDEN_ID_MAPPING_PATH)
     golden_df.to_csv(GOLDEN_ID_MAPPING_PATH, index=False)
 
-    # -----------------------------------------------------
-    # MULTI-COUNTY DETECTION
-    # -----------------------------------------------------
     multi = (
         golden_df.groupby("golden_id")["county_desc"]
         .nunique()
@@ -329,19 +295,15 @@ def build_clusters_and_golden_ids():
     )
 
     multi = multi[multi["county_count"] > 1]
+
     multi = multi.merge(golden_df, on="golden_id", how="left")
+
     multi["pipeline_run_timestamp"] = pd.Timestamp.utcnow()
 
-    safe_remove(MULTI_COUNTY_PEOPLE_PATH)
     multi.to_csv(MULTI_COUNTY_PEOPLE_PATH, index=False)
 
-    total_people = golden_df["golden_id"].nunique()
-    multi_county = multi["golden_id"].nunique()
-    single_county = total_people - multi_county
-
-    print(f"Golden IDs created   : {total_people:,}")
-    print(f"Single-county people : {single_county:,}")
-    print(f"Multi-county people  : {multi_county:,}")
+    print(f"Golden IDs created: {golden_df['golden_id'].nunique():,}")
+    print(f"Multi-county people: {multi['golden_id'].nunique():,}")
 
 
 # ---------------------------------------------------------
