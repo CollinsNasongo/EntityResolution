@@ -29,14 +29,36 @@ def load_dataframe(path: Path, temp_dir: Path = None):
 
         files = extract_zip(path, temp_dir)
 
-        # load first supported file (simple strategy)
+        valid_files = []
+
         for f in files:
             try:
-                return load_dataframe(f, temp_dir)
+                f_type = detect_file_type(f)
+
+                if f_type in {"csv", "json", "excel", "parquet"}:
+                    valid_files.append(f)
+
             except Exception:
                 continue
 
-        raise ValueError("No valid files found inside ZIP")
+        if not valid_files:
+            raise ValueError("No supported files found inside ZIP")
+
+        # -------------------------------------------------
+        # PRIORITY (csv > json > excel > parquet)
+        # -------------------------------------------------
+        PRIORITY = {"csv": 1, "json": 2, "excel": 3, "parquet": 4}
+
+        valid_files.sort(
+            key=lambda f: PRIORITY.get(detect_file_type(f), 99)
+        )
+
+        # -------------------------------------------------
+        # LOAD MODE (default = merge)
+        # -------------------------------------------------
+        dfs = [load_dataframe(f, temp_dir) for f in valid_files]
+
+        return pd.concat(dfs, ignore_index=True)
 
     # -----------------------------------------------------
     # CSV / TXT

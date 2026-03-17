@@ -1,28 +1,18 @@
 """
-entityresolver.parsing.detector
-
-File type detection utilities.
+entityresolver.parsing.csv_handler
 """
 
+import pandas as pd
 from pathlib import Path
 
 
-def detect_file_type(path: Path) -> str:
-    suffix = path.suffix.lower()
+def load_csv(path: Path) -> pd.DataFrame:
+    """
+    Load CSV / TXT / TSV file with automatic type inference.
+    """
 
-    if suffix == ".zip":
-        return "zip"
-
-    if suffix in [".csv", ".txt", ".tsv"]:
-        return "csv"
-
-    if suffix == ".json":
-        return "json"
-
-    if suffix in [".xlsx", ".xls"]:
-        return "excel"
-
-    if suffix == ".parquet":
-        return "parquet"
-
-    raise ValueError(f"Unsupported file type: {suffix}")
+    try:
+        return pd.read_csv(path, low_memory=False)
+    except Exception:
+        # fallback for tab-separated
+        return pd.read_csv(path, sep="\t", low_memory=False)
