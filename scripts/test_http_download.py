@@ -18,12 +18,12 @@ logging.basicConfig(
 # ---------------------------------------------------------
 # Config
 # ---------------------------------------------------------
-url = "https://raw.githubusercontent.com/python/cpython/main/README.rst"
+url = "https://calmcode.io/static/data/titanic.csv"
 
 data_dir = Path("data")
 data_dir.mkdir(exist_ok=True)
 
-output = data_dir / "readme.rst"
+output = data_dir / "titanic.csv"
 manifest_path = data_dir / "manifest.json"
 
 
@@ -41,5 +41,5 @@ result = ingest(
     source=source,
     destination=output,
     manifest=manifest,
-    overwrite=False, 
+    overwrite=True, 
 )

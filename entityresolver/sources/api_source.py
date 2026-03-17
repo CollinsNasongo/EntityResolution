@@ -31,26 +31,6 @@ class ApiSource:
         pagination_key: Optional[str] = None,
         data_key: Optional[str] = None,
     ):
-        """
-        Parameters
-        ----------
-        url : str
-            API endpoint.
-        method : str
-            HTTP method (GET, POST, etc.).
-        params : dict
-            Query parameters.
-        headers : dict
-            HTTP headers.
-        retries : int
-            Retry attempts.
-        timeout : int
-            Request timeout.
-        pagination_key : str, optional
-            Key for next page token (if paginated API).
-        data_key : str, optional
-            Key where actual records live in response.
-        """
         self.url = url
         self.method = method.upper()
         self.params = params or {}
@@ -60,13 +40,19 @@ class ApiSource:
         self.pagination_key = pagination_key
         self.data_key = data_key
 
+    # -----------------------------------------------------
+    # Internal request logic
+    # -----------------------------------------------------
     def _make_request(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        """Internal request handler with retries."""
         attempt = 0
 
         while attempt <= self.retries:
             try:
-                logger.info("API request to %s (attempt %s)", self.url, attempt + 1)
+                logger.info(
+                    "API request to %s (attempt %s)",
+                    self.url,
+                    attempt + 1,
+                )
 
                 response = requests.request(
                     method=self.method,
@@ -91,35 +77,60 @@ class ApiSource:
                 logger.info("Retrying in %ss...", delay)
                 time.sleep(delay)
 
+    # -----------------------------------------------------
+    # Public fetch
+    # -----------------------------------------------------
     def fetch(self) -> Iterable[bytes]:
         """
         Fetch API data and stream as NDJSON.
-
-        Yields
-        ------
-        bytes
-            JSON records encoded as UTF-8 lines.
         """
         params = dict(self.params)
 
         while True:
             response_json = self._make_request(params)
 
-            # Extract records
+            # -------------------------------------------------
+            # Extract records safely
+            # -------------------------------------------------
             if self.data_key:
                 records = response_json.get(self.data_key, [])
             else:
-                records = response_json
+                # Auto-detect structure
+                if isinstance(response_json, list):
+                    records = response_json
+                elif isinstance(response_json, dict):
+                    # Try common keys
+                    for key in ["results", "data", "items"]:
+                        if key in response_json and isinstance(response_json[key], list):
+                            records = response_json[key]
+                            logger.debug(
+                                "Auto-detected data key '%s' for API response",
+                                key,
+                            )
+                            break
+                    else:
+                        # Fallback: wrap entire response as single record
+                        records = [response_json]
+                else:
+                    raise ValueError("Unsupported API response format")
 
+            # -------------------------------------------------
+            # Validate records
+            # -------------------------------------------------
             if not isinstance(records, list):
-                raise ValueError("API response is not a list of records")
+                raise ValueError("API response records are not a list")
 
             logger.info("Fetched %d records from API", len(records))
 
+            # -------------------------------------------------
+            # Yield NDJSON
+            # -------------------------------------------------
             for record in records:
                 yield (json.dumps(record) + "\n").encode("utf-8")
 
-            # Handle pagination
+            # -------------------------------------------------
+            # Pagination
+            # -------------------------------------------------
             if not self.pagination_key:
                 break
 
