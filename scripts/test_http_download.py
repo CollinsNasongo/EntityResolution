@@ -23,12 +23,14 @@ logging.basicConfig(
 # ---------------------------------------------------------
 # Config
 # ---------------------------------------------------------
-url = "https://calmcode.io/static/data/titanic.csv"
+url = "https://s3.amazonaws.com/dl.ncsbe.gov/data/ncvoter13.zip"
 
 data_dir = Path("data")
 data_dir.mkdir(exist_ok=True)
 
-output = data_dir / "titanic.csv"
+temp_dir = data_dir / "temp"   # 👈 required for ZIP extraction
+
+output = data_dir / "ncvoter13.zip"   # 👈 FIXED
 manifest_path = data_dir / "manifest.json"
 schema_path = data_dir / "schema.json"
 registry_path = data_dir / "schema_registry.json"
@@ -57,21 +59,21 @@ print(f"📦 Size: {result.stat().st_size:,} bytes")
 
 
 # ---------------------------------------------------------
-# Step 2 — Load into DataFrame
+# Step 2 — Load into DataFrame (ZIP-aware)
 # ---------------------------------------------------------
-df = load_dataframe(result)
+df = load_dataframe(result, temp_dir=temp_dir)  # 👈 IMPORTANT
 
 print(f"\n📊 Loaded DataFrame with {len(df):,} rows")
 print(f"🧱 Columns: {list(df.columns)}")
 
 
 # ---------------------------------------------------------
-# Step 3 — Extract schema (WITH CONTEXT)
+# Step 3 — Extract schema
 # ---------------------------------------------------------
 schema = extract_schema(
     df,
     filename=result.name,
-    source=source.url,      # cleaner lineage
+    source=source.url,
     file_path=result,
 )
 
