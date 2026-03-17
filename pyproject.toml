@@ -13,3 +13,6 @@ include = ["entityresolver*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "integration: marks tests that use real external services",
+]

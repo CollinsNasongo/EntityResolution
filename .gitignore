@@ -28,6 +28,7 @@ mono_crash.*
 
 # Build results
 *.egg-info/
+*.pytest_cache/
 
 [Dd]ebug/
 [Dd]ebugPublic/
