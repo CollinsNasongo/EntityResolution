@@ -1,5 +1,5 @@
 """
-entityresolver.schema.mapper
+entityresolver.mapping.mapper
 
 Apply schema mappings to transform DataFrames into a standard structure.
 """
