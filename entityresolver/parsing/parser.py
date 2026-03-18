@@ -1,5 +1,5 @@
 """
-entityresolver.parsing.loader
+entityresolver.parsing.parser
 
 Unified interface for loading files into DataFrames.
 """
