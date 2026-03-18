@@ -6,8 +6,9 @@ Load user-defined mapping configurations from JSON files.
 
 from pathlib import Path
 from typing import Dict
-import json
 import logging
+
+from entityresolver.utils.config import load_json, load_json_from_name
 
 logger = logging.getLogger(__name__)
 
@@ -25,29 +26,11 @@ def load_mapping(path: Path) -> Dict[str, str]:
             "target_column": "source_column"
         }
     }
-
-    Parameters
-    ----------
-    path : Path
-        Path to mapping JSON file
-
-    Returns
-    -------
-    dict
-        Mapping dictionary {target: source}
     """
-
-    if not path.exists():
-        raise FileNotFoundError(f"Mapping file not found: {path}")
 
     logger.info("Loading mapping config: %s", path)
 
-    try:
-        with open(path, "r", encoding="utf-8") as f:
-            config = json.load(f)
-
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid JSON in mapping file: {path}") from exc
+    config = load_json(path)
 
     # -----------------------------------------------------
     # Validate structure
@@ -76,7 +59,7 @@ def load_mapping(path: Path) -> Dict[str, str]:
 
 
 # ---------------------------------------------------------
-# OPTIONAL: LOAD BY NAME (CONFIG ROOT SUPPORT)
+# LOAD BY NAME (CONFIG ROOT SUPPORT)
 # ---------------------------------------------------------
 def load_mapping_from_name(
     name: str,
@@ -87,11 +70,19 @@ def load_mapping_from_name(
 
     Example:
         load_mapping_from_name("north_carolina")
-
-    Will load:
-        config/mappings/north_carolina.json
     """
 
-    path = config_dir / f"{name}.json"
+    logger.info("Loading mapping config by name: %s", name)
 
-    return load_mapping(path)
+    config = load_json_from_name(name, config_dir)
+
+    # Reuse validation logic
+    if "mapping" not in config:
+        raise ValueError("Mapping config missing required key: 'mapping'")
+
+    mapping = config["mapping"]
+
+    if not isinstance(mapping, dict):
+        raise ValueError("'mapping' must be a dictionary")
+
+    return mapping
