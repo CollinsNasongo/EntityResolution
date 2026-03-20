@@ -1,53 +1,58 @@
 """
 entityresolver.parsing.zip_handler
+
+Utilities for safely extracting ZIP archives.
 """
 
 from pathlib import Path
+from typing import List
 import zipfile
 
 
-def extract_zip(zip_path: Path, extract_to: Path):
+def extract_zip(
+    zip_path: Path,
+    extract_to: Path,
+) -> List[Path]:
     """
-    Extract ZIP and return list of extracted file paths.
+    Extract a ZIP archive and return extracted file paths.
 
-    Safe extraction:
-    - prevents path traversal
+    Extraction is performed safely:
+    - prevents path traversal (ZIP slip)
     - ignores directories
-    """
+    - skips hidden/system files
 
+    Parameters
+    ----------
+    zip_path : Path
+        Path to the ZIP file.
+    extract_to : Path
+        Destination directory.
+
+    Returns
+    -------
+    List[Path]
+        List of extracted file paths.
+    """
     extract_to.mkdir(parents=True, exist_ok=True)
 
-    extracted_files = []
+    extracted_files: List[Path] = []
 
     with zipfile.ZipFile(zip_path, "r") as zip_ref:
         for member in zip_ref.infolist():
-
-            # -------------------------------------------------
-            # Prevent ZIP SLIP (security)
-            # -------------------------------------------------
             member_path = Path(member.filename)
 
             if ".." in member_path.parts:
-                continue  # skip unsafe paths
+                continue
 
-            # -------------------------------------------------
-            # Extract
-            # -------------------------------------------------
             extracted_path = zip_ref.extract(member, extract_to)
-            p = Path(extracted_path)
+            path = Path(extracted_path)
 
-            # -------------------------------------------------
-            # Keep only files (ignore directories)
-            # -------------------------------------------------
-            if not p.is_file():
+            if not path.is_file():
                 continue
 
-            # -------------------------------------------------
-            # Optional: skip hidden/system files
-            # -------------------------------------------------
-            if p.name.startswith(".") or p.name.startswith("__"):
+            if path.name.startswith(".") or path.name.startswith("__"):
                 continue
 
-            extracted_files.append(p)
+            extracted_files.append(path)
 
     return extracted_files

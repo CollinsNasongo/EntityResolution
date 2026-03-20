@@ -1,49 +1,97 @@
 """
-entityresolver.cleaning.identity
+entityresolver.cleaning.transform
 
-Utilities for adding unique identifiers to datasets.
+Utilities for applying configurable cleaning rules to DataFrames.
 """
 
-from typing import Optional
+from typing import Any, Dict
+
 import pandas as pd
-import uuid
 
 
-def add_unique_id(
+def apply_cleaning(
     df: pd.DataFrame,
-    column_name: str = "unique_id",
-    prefix: Optional[str] = None,
+    config: Dict[str, Any],
 ) -> pd.DataFrame:
     """
-    Add a unique ID column to a DataFrame.
+    Apply configurable cleaning rules to a DataFrame.
+
+    The configuration supports:
+    - global rules applied to all columns
+    - column-specific rules applied per column
 
     Parameters
     ----------
     df : pd.DataFrame
-        Input DataFrame
-    column_name : str
-        Name of the ID column
-    prefix : str, optional
-        Optional prefix (e.g., dataset name)
+        Input DataFrame.
+    config : Dict[str, Any]
+        Cleaning configuration dictionary.
 
     Returns
     -------
     pd.DataFrame
+        Cleaned DataFrame.
     """
 
     df = df.copy()
 
-    if column_name in df.columns:
-        raise ValueError(f"Column already exists: {column_name}")
+    global_cfg = config.get("global", {})
+    column_cfg = config.get("columns", {})
 
-    def generate_id():
-        uid = uuid.uuid4().hex
-        return f"{prefix}_{uid}" if prefix else uid
+    # ---------------------------
+    # GLOBAL RULES
+    # ---------------------------
+    for column in df.columns:
+        series = df[column].astype("string")
 
-    df.insert(
-        0,
-        column_name,
-        [generate_id() for _ in range(len(df))]
-    )
+        if global_cfg.get("strip"):
+            series = series.str.strip()
+
+        if global_cfg.get("lowercase"):
+            series = series.str.lower()
+
+        if "null_values" in global_cfg:
+            series = series.replace(
+                global_cfg["null_values"],
+                pd.NA,
+            )
+
+        df[column] = series
+
+    # ---------------------------
+    # COLUMN-SPECIFIC RULES
+    # ---------------------------
+    for column, rules in column_cfg.items():
+        if column not in df.columns:
+            continue
+
+        series = df[column]
+
+        if rules.get("remove_titles"):
+            series = series.str.replace(
+                r"^(mr|mrs|ms|dr)\s+",
+                "",
+                regex=True,
+            )
+
+        if rules.get("alpha_only"):
+            series = series.str.replace(
+                r"[^a-z\s]",
+                "",
+                regex=True,
+            )
+
+        if rules.get("type") == "numeric":
+            series = pd.to_numeric(
+                series,
+                errors="coerce",
+            )
+
+        if "extract_regex" in rules:
+            series = series.str.extract(
+                rules["extract_regex"],
+            )
+
+        df[column] = series
 
     return df

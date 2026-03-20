@@ -4,8 +4,8 @@ entityresolver.sources.http_file_source
 HTTP file-based data source.
 """
 
-from typing import Iterable, Optional, Dict
 import logging
+from typing import Dict, Iterable, Optional
 
 from entityresolver.connectors.http_connector import http_stream
 
@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 
 class HttpFileSource:
     """
-    Data source for downloading files over HTTP as a stream.
+    Data source for streaming files over HTTP.
     """
 
     def __init__(
@@ -24,7 +24,23 @@ class HttpFileSource:
         retries: int = 3,
         timeout: int = 30,
         headers: Optional[Dict[str, str]] = None,
-    ):
+    ) -> None:
+        """
+        Initialize HTTP file source.
+
+        Parameters
+        ----------
+        url : str
+            File URL.
+        chunk_size : int, optional
+            Size of chunks to stream.
+        retries : int, optional
+            Number of retry attempts.
+        timeout : int, optional
+            Request timeout in seconds.
+        headers : Dict[str, str], optional
+            HTTP headers.
+        """
         self.url = url
         self.chunk_size = chunk_size
         self.retries = retries
@@ -33,11 +49,12 @@ class HttpFileSource:
 
     def fetch(self) -> Iterable[bytes]:
         """
-        Stream file content from HTTP endpoint.
+        Stream file content from an HTTP endpoint.
 
         Returns
         -------
         Iterable[bytes]
+            Iterator over file content chunks.
         """
         logger.info("Fetching HTTP file: %s", self.url)
 
@@ -50,4 +67,7 @@ class HttpFileSource:
         )
 
     def __repr__(self) -> str:
+        """
+        Return string representation of the HTTP file source.
+        """
         return f"HttpFileSource(url={self.url})"

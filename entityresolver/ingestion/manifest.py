@@ -4,80 +4,156 @@ entityresolver.ingestion.manifest
 JSON-based ingestion manifest with attempt-level tracking.
 """
 
-from pathlib import Path
-import json, uuid
+import json
+import uuid
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 
 
 class Manifest:
-    def __init__(self, path: Path):
+    """
+    JSON-backed manifest for tracking ingestion attempts and file states.
+    """
+
+    def __init__(self, path: Path) -> None:
+        """
+        Initialize the manifest.
+
+        Parameters
+        ----------
+        path : Path
+            Path to the manifest file.
+        """
         self.path = path
 
-        # structure:
-        # {
-        #   "files": { filename: {...} },
-        #   "attempts": { attempt_id: {...} }
-        # }
-        self.data: Dict[str, Any] = {"files": {}, "attempts": {}}
+        self.data: Dict[str, Any] = {
+            "files": {},
+            "attempts": {},
+        }
 
         if self.path.exists():
             self._load()
 
-    # -----------------------------------------------------
-    # Internal
-    # -----------------------------------------------------
-    def _load(self):
-        with open(self.path, "r") as f:
-            self.data = json.load(f)
+    def _load(self) -> None:
+        """
+        Load manifest data from disk.
+        """
+        with open(self.path, "r") as file:
+            self.data = json.load(file)
 
-        # backward compatibility (old flat format)
         if "files" not in self.data:
-            self.data = {"files": self.data, "attempts": {}}
+            self.data = {
+                "files": self.data,
+                "attempts": {},
+            }
 
-    def _save(self):
+    def _save(self) -> None:
+        """
+        Persist manifest data to disk.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-        with open(self.path, "w") as f:
-            json.dump(self.data, f, indent=2)
+        with open(self.path, "w") as file:
+            json.dump(self.data, file, indent=2)
 
-    # -----------------------------------------------------
-    # Public API
-    # -----------------------------------------------------
-    def get_file(self, filename: str) -> Optional[dict]:
+    def get_file(self, filename: str) -> Optional[Dict[str, Any]]:
+        """
+        Retrieve file-level metadata.
+
+        Parameters
+        ----------
+        filename : str
+            File name.
+
+        Returns
+        -------
+        Dict[str, Any], optional
+            File record if it exists.
+        """
         return self.data["files"].get(filename)
 
     def is_completed(self, filename: str) -> bool:
+        """
+        Check if a file has been successfully ingested.
+
+        Parameters
+        ----------
+        filename : str
+            File name.
+
+        Returns
+        -------
+        bool
+            True if file is marked as completed.
+        """
         record = self.get_file(filename)
-        return record and record.get("status") == "completed"
+        return bool(record and record.get("status") == "completed")
 
     def latest_attempt(self, filename: str) -> Optional[str]:
+        """
+        Get the latest attempt ID for a file.
+
+        Parameters
+        ----------
+        filename : str
+            File name.
+
+        Returns
+        -------
+        str, optional
+            Latest attempt ID.
+        """
         record = self.get_file(filename)
         return record.get("latest_attempt") if record else None
 
-    def attempts_for(self, filename: str) -> List[dict]:
+    def attempts_for(self, filename: str) -> List[Dict[str, Any]]:
+        """
+        Retrieve all attempts for a given file.
+
+        Parameters
+        ----------
+        filename : str
+            File name.
+
+        Returns
+        -------
+        List[Dict[str, Any]]
+            List of attempt records.
+        """
         return [
-            a for a in self.data["attempts"].values()
-            if a["filename"] == filename
+            attempt
+            for attempt in self.data["attempts"].values()
+            if attempt["filename"] == filename
         ]
 
-    # -----------------------------------------------------
-    # State transitions
-    # -----------------------------------------------------
     def mark_started(self, filename: str, source: str) -> str:
-        ts = datetime.utcnow().isoformat()
-        attempt_id = f"{filename}_{ts}_{uuid.uuid4().hex}"
+        """
+        Mark the start of an ingestion attempt.
 
-        # record attempt
+        Parameters
+        ----------
+        filename : str
+            File name.
+        source : str
+            Source identifier.
+
+        Returns
+        -------
+        str
+            Generated attempt ID.
+        """
+        timestamp = datetime.utcnow().isoformat()
+        attempt_id = f"{filename}_{timestamp}_{uuid.uuid4().hex}"
+
         self.data["attempts"][attempt_id] = {
             "attempt_id": attempt_id,
             "filename": filename,
             "source": source,
             "status": "in_progress",
-            "started_at": ts,
+            "started_at": timestamp,
         }
 
-        # update file-level state
         self.data["files"][filename] = {
             "status": "in_progress",
             "latest_attempt": attempt_id,
@@ -91,7 +167,19 @@ class Manifest:
         attempt_id: str,
         size_bytes: int,
         checksum: Optional[str] = None,
-    ):
+    ) -> None:
+        """
+        Mark an ingestion attempt as completed.
+
+        Parameters
+        ----------
+        attempt_id : str
+            Attempt ID.
+        size_bytes : int
+            File size in bytes.
+        checksum : str, optional
+            File checksum.
+        """
         attempt = self.data["attempts"][attempt_id]
 
         attempt.update(
@@ -114,7 +202,17 @@ class Manifest:
 
         self._save()
 
-    def mark_failed(self, attempt_id: str, error: str):
+    def mark_failed(self, attempt_id: str, error: str) -> None:
+        """
+        Mark an ingestion attempt as failed.
+
+        Parameters
+        ----------
+        attempt_id : str
+            Attempt ID.
+        error : str
+            Error message.
+        """
         attempt = self.data["attempts"][attempt_id]
 
         attempt.update(
@@ -127,7 +225,6 @@ class Manifest:
 
         filename = attempt["filename"]
 
-        # update file-level status (last known state)
         self.data["files"][filename]["status"] = "failed"
 
         self._save()
